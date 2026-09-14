@@ -1,0 +1,328 @@
+====================================================================
+LOL RECOMMENDER - DOCUMENTACION DE LOS MODELOS EN USO
+Version: parche 16.13 | Campeon de referencia: Jhin (GOLD, LA1)
+Actualizado: 2026-07-09
+====================================================================
+
+DECISION DE ARQUITECTURA
+  Se midio un modelo pregame de probabilidad de victoria (draft +
+  senales de jugadores) y su ROC-AUC quedo en ~0.53: practicamente una
+  moneda al aire. Se ELIMINO. La probabilidad de victoria ahora:
+
+    - arranca en un 50% FIJO y honesto (parametro, no modelo), y
+    - la construye el MODELO IN-GAME conforme llegan senales reales
+      de la partida (kills, torres, dragones...).
+
+  La app usa DOS modelos por campeon y liga, guardados en:
+      models/champions/<Campeon>/<LIGA>/
+
+    1. Modelo IN-GAME de probabilidad de victoria   (kind "live")
+    2. Modelo de recomendacion de items             (kind "item")
+
+  Ambos se versionan por PARCHE (caso OTP): si ya existe un modelo del
+  parche actual, se reutiliza sin reentrenar; solo un parche nuevo o
+  --force-retrain disparan otro entrenamiento.
+
+
+--------------------------------------------------------------------
+1. MODELO IN-GAME DE VICTORIA (kind "live")
+--------------------------------------------------------------------
+
+OBJETIVO
+  Estimar la probabilidad de ganar SEGUN EL ESTADO ACTUAL de la
+  partida, recalculada en cada refresh mientras juegas.
+
+VARIABLE OBJETIVO (que se predice)
+  win : binaria {0, 1}
+    1 = el equipo (desde cuya perspectiva se calculan los diffs)
+        termino ganando la partida.
+    0 = la perdio.
+  El modelo emite P(win = 1 | estado de la partida al minuto t), es
+  decir: "dado el marcador actual, que probabilidad hay de terminar
+  ganando". Cada partida aporta el MISMO target a todas sus filas-
+  minuto (el resultado final), en ambas perspectivas (azul/rojo).
+
+DATOS DE ENTRENAMIENTO
+  - Timelines de Match-V5 (--mode ingest-timelines): el estado minuto
+    a minuto de las partidas ranked del campeon, de jugadores de la
+    misma region y liga.
+  - Volumen actual (Jhin GOLD): 2,983 partidas -> ~140,000 filas
+    (una fila por minuto 4-30, en ambas perspectivas: equipo azul y
+    rojo con el signo volteado, lo que centra y duplica el dataset).
+  - Split temporal POR PARTIDA (60/20/20): todas las filas de una
+    partida caen en el mismo split; nunca se evalua sobre minutos de
+    partidas vistas en entrenamiento.
+
+VARIABLES EXPLICATIVAS (7)
+  minute        minuto de la partida (4 a 30)
+  kill_diff     kills de mi equipo - kills del enemigo
+  level_diff    suma de niveles de mi equipo - la del enemigo
+  cs_diff       suma de CS (subditos+jungla) mia - la del enemigo
+  turret_diff   torres destruidas por mi equipo - por el enemigo
+  dragon_diff   dragones mios - enemigos
+  baron_diff    barones mios - enemigos
+
+  REGLA DE PARIDAD: solo variables que el Live Client Data API expone
+  durante una partida real. El oro enemigo NO se usa: entrenar con el
+  seria hacer trampa (el modelo fallaria en produccion al no tenerlo).
+
+ENTRENAMIENTO Y SELECCION
+  - Se comparan Regresion Logistica, LightGBM y XGBoost.
+  - Seleccion por ROC-AUC de validacion; el ganador se CALIBRA
+    (sigmoid sobre validacion) para que "70%" signifique de verdad
+    "gana ~7 de cada 10 veces".
+  - Los tres algoritmos empatan (~0.79): con estas variables el
+    problema es casi lineal. Seleccionado: XGBoost (por decimales).
+
+ARQUITECTURA (entrenamiento)
+
+   Riot API  (Match-V5 /timeline)
+        |
+        |  --mode ingest-timelines   (1 llamada por partida, reanudable)
+        v
+   +--------------------------------------------------------------+
+   | SQLite: tabla timeline_minutes                               |
+   | (matchId, minuto, kills/niveles/CS/torres/dragones/barones   |
+   |  acumulados por equipo)                                      |
+   +--------------------------------------------------------------+
+        |
+        |  build_live_training_frame
+        |  (diffs por minuto 4-30, en 2 perspectivas)
+        v
+   ~140,000 filas  --->  split temporal POR PARTIDA  60 / 20 / 20
+        |
+        v
+   +----------------+   +----------------+   +----------------+
+   | Reg. Logistica |   |    LightGBM    |   |    XGBoost     |
+   +----------------+   +----------------+   +----------------+
+        \                     |                     /
+         \--- seleccion por ROC-AUC de validacion -/
+                              |
+                              v
+              calibracion sigmoid (set de validacion)
+                              |
+                              v
+   +--------------------------------------------------------------+
+   | Registry: models/champions/<Campeon>/<LIGA>/                 |
+   |   live_model_<ts>_patch<p>_n<N>.joblib  (modelo calibrado)   |
+   |   live_model_*.json  (metricas, AUC por minuto, parche)      |
+   +--------------------------------------------------------------+
+
+RENDIMIENTO (test: ~28,000 filas de partidas nunca vistas)
+  AUC global 0.79 | Accuracy 71% | Brier 0.19
+  AUC por tramo de minutos:
+    min 4-9: 0.66 | 10-14: 0.74 | 15-19: 0.81 | 20-24: 0.86 | 25-30: 0.88
+  Lectura: al minuto 20+ el modelo ordena correctamente al ganador en
+  ~86-88% de los pares. Es el unico modelo con poder predictivo real.
+
+
+--------------------------------------------------------------------
+2. MODELO DE ITEMS (kind "item")
+--------------------------------------------------------------------
+
+OBJETIVO
+  Sugerir los items que mejor funcionan para el campeon en el contexto
+  de ESTA partida (rival directo, rol y composiciones).
+
+VARIABLE OBJETIVO (que se predice)
+  item_<id> : 20 variables binarias {0, 1}, una por cada uno de los
+  20 items finales mas comunes del campeon.
+    1 = el item aparece en la build del campeon al TERMINAR la partida.
+    0 = no aparece.
+  Es un problema MULTI-ETIQUETA (una partida activa varias a la vez).
+  El modelo emite P(item en build final | matchup) para cada item y
+  la recomendacion es el ranking de esas 20 probabilidades (top-3).
+  Items componentes, consumibles y botas basicas quedan excluidos.
+
+DATOS DE ENTRENAMIENTO
+  - Las 3,000 partidas mas recientes del campeon en el historico local
+    (CHAMPION_HISTORY_MATCHES en .env).
+  - Split temporal 60/20/20 por fecha.
+
+VARIABLES EXPLICATIVAS (16)
+  role_TOP/JUNGLE/MIDDLE/BOTTOM/UTILITY   rol jugado (one-hot, 5)
+  own_attack/defense/magic/difficulty     perfil Data Dragon del campeon (4)
+  opp_attack/defense/magic/difficulty     perfil del rival directo (4)
+  ally_magic_share                        % de danio magico de mi comp (1)
+  enemy_magic_share                       % de danio magico enemiga (1)
+  (own_* es constante por campeon; aporta via interacciones con opp_*)
+
+ENTRENAMIENTO Y SELECCION
+  - Mismos 3 algoritmos, envueltos en OneVsRest (un clasificador
+    binario por item). Seleccion por hit-rate@3 de validacion.
+  - Seleccionado: XGBoost.
+
+ARQUITECTURA (entrenamiento)
+
+   Riot API  (Match-V5)
+        |
+        |  --mode ingest-ladder   (partidas ranked de la liga)
+        v
+   +--------------------------------------------------------------+
+   | SQLite: tabla participants                                   |
+   | (campeon, rol, items finales item0..item6, rival, comps...)  |
+   +--------------------------------------------------------------+
+        |
+        |  build_champion_frame  (filtra al campeon, 3000 partidas)
+        |  + etiquetas item_<id> de sus 20 items finales mas comunes
+        v
+   ~3,000 filas (16 features + 20 etiquetas)
+        |
+        |  split temporal 60 / 20 / 20
+        v
+   +----------------+   +----------------+   +----------------+
+   |  OvR(Reg.Log.) |   |  OvR(LightGBM) |   |  OvR(XGBoost)  |
+   +----------------+   +----------------+   +----------------+
+        \                     |                     /
+         \---- seleccion por hit-rate@3 validacion /
+                              |
+                              v
+   +--------------------------------------------------------------+
+   | Registry: models/champions/<Campeon>/<LIGA>/                 |
+   |   item_model_<ts>_patch<p>_n<N>.joblib (+ .json con item_ids)|
+   +--------------------------------------------------------------+
+
+RENDIMIENTO (test: 592 partidas)
+  hit@3 = 0.90   (en 9 de cada 10 partidas, al menos 1 de los 3 items
+                  sugeridos aparece en la build final real)
+  precision@3 = 0.62 | recall@3 = 0.48
+
+
+--------------------------------------------------------------------
+3. COMO SE HACE LA INFERENCIA (paso a paso)
+--------------------------------------------------------------------
+
+3.1 PROBABILIDAD DE VICTORIA (app/ml/inference.py)
+
+  Cada REFRESH_SECONDS (15s por defecto) la app:
+
+  1) Lee el snapshot del Live Client Data API (kills, niveles y CS de
+     los 10 jugadores; torres/dragones/barones por lado; minuto).
+  2) Construye las 7 features en vivo con live_features_from_snapshot
+     (exactamente las mismas con las que se entreno el modelo).
+  3) Carga del registry el modelo "live" del campeon+liga (cacheado;
+     se reutiliza mientras el parche no cambie) y calcula
+     P(in-game) = modelo.predict_proba(features).
+  4) Mezcla con el ancla fija:
+         P(final) = (1 - w) * 0.50  +  w * P(in-game)
+     w crece linealmente con el minuto hasta 90% al minuto 20.
+  5) Publica probabilidad + factores (los diffs no nulos) + confianza:
+         baja  = sin senales o sin modelo entrenado
+         media = modelo entrenado, w < 45% (partida temprana)
+         alta  = modelo entrenado, w >= 45%
+
+  Fallbacks en cadena (nunca se queda sin respuesta):
+    sin modelo live  -> heuristico de pesos a mano (ml/baseline.py)
+    sin senales vivo -> 50% fijo + aviso en warnings
+
+  DIAGRAMA (inferencia de victoria)
+
+   Live Client API (cliente del juego)
+        |
+        |  snapshot cada 15s
+        v
+   live_features_from_snapshot
+   [minute, kill_diff, level_diff, cs_diff,
+    turret_diff, dragon_diff, baron_diff]
+        |
+        v
+   +---------------------------------------+     (fallback)
+   | modelo live (XGBoost calibrado)       | --x--> heuristico
+   | del registry champions/<C>/<LIGA>/    |        baseline.py
+   +---------------------------------------+
+        |
+        |  P(in-game)
+        v
+   P(final) = (1-w) * 0.50 + w * P(in-game)      w: 0% -> 90% (min 20)
+        |
+        v
+   UI: probabilidad + factores + confianza + warnings
+
+3.2 RECOMENDACION DE ITEMS
+
+  1) Del snapshot se toman: campeon propio, rival directo, rol y las
+     dos composiciones.
+  2) Se construyen las 16 features de matchup (build_feature_row).
+  3) El modelo "item" del campeon emite 20 probabilidades (una por
+     item final) y se ordenan de mayor a menor.
+  4) Las reglas de estado en vivo filtran/ajustan el ranking: oro
+     disponible, fase de la partida (early/mid/late) y que items ya
+     estan comprados o en construccion.
+  5) Se muestran los items sugeridos con su justificacion.
+
+  DIAGRAMA (inferencia de items)
+
+   snapshot (campeon, rival, rol, comps)
+        |
+        v
+   build_feature_row  ->  16 features de matchup
+        |
+        v
+   +---------------------------------------+
+   | modelo item (OvR XGBoost)             |
+   | 20 probabilidades, una por item final |
+   +---------------------------------------+
+        |
+        |  ranking por probabilidad
+        v
+   reglas de estado: oro | fase | inventario actual
+        |
+        v
+   UI: top items sugeridos
+
+
+--------------------------------------------------------------------
+4. VIGENCIA (caso OTP) Y COMANDOS
+--------------------------------------------------------------------
+
+  Los 2 modelos se versionan por PARCHE. Si ya existe un modelo del
+  campeon para la liga y el parche actual, se REUTILIZA sin
+  reentrenar (jugador OTP). Solo un parche nuevo o --force-retrain
+  disparan otro entrenamiento.
+
+  .env relevante:
+    CHAMPION=Jhin                  # campeon a punto de jugar
+    TARGET_TIER=GOLD               # liga del segmento de datos
+    CHAMPION_HISTORY_MATCHES=3000  # tope de historico por campeon
+
+  Comandos (desde lol_recommender_app/):
+    python main_orchestrator.py --mode ingest-ladder     # 1) partidas de la liga
+    python main_orchestrator.py --mode ingest-timelines  # 2) estado minuto a minuto
+    python main_orchestrator.py --mode train-champion    # 3) entrena/reutiliza ambos
+        [--champion Nombre] [--target-tier LIGA] [--force-retrain]
+    python main_orchestrator.py --mode app               # 4) app completa en vivo
+
+
+--------------------------------------------------------------------
+5. ARCHIVOS GENERADOS POR ENTRENAMIENTO
+--------------------------------------------------------------------
+
+  En models/champions/<Campeon>/<LIGA>/:
+    live_model_*.joblib/.json       modelo in-game + metadatos/metricas
+    item_model_*.joblib/.json       modelo de items + metadatos/metricas
+    live_auc_by_minute.png          AUC del in-game segun el minuto
+    live_metric_comparison.png      barras comparativas del in-game
+    item_metric_comparison.png      hit@3 / precision@3 / recall@3
+    item_model_comparison.csv/json  datos crudos de la comparacion
+
+  Documentacion navegable: DOCUMENTACION_MODELOS.html (este mismo
+  contenido con graficas y diagramas incrustados).
+
+
+--------------------------------------------------------------------
+6. LIMITACIONES HONESTAS
+--------------------------------------------------------------------
+
+  - Antes del minuto ~4 no hay prediccion mas alla del 50%: es una
+    decision deliberada (el pregame no predice; se midio y se retiro).
+  - Los modelos son especificos por campeon+liga+parche: otro campeon
+    u otra liga requieren su propia ingesta y entrenamiento.
+  - El modelo in-game no ve oro, vision ni composiciones: solo el
+    marcador. Es suficiente para AUC 0.88 al late, pero partidas con
+    ventajas "invisibles" (oro en items sin pelear) se leen tarde.
+  - Espectando (Spectator-V5) no hay kills/torres en tiempo real: la
+    probabilidad se queda en 50% y se avisa.
+  - Con dev key de Riot (100 req/2min, expira cada 24h) las ingestas
+    grandes tardan ~1h; son reanudables y abortan limpio si la key
+    expira (basta renovarla y relanzar).
+====================================================================

@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Arquitectura y funcionamiento del chat y del RAG local de LoL Recommender.">
+  <title>Chat y RAG · LoL Recommender</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: #0d1b2a;
+      --panel-2: #102439;
+      --ink: #e8f1f8;
+      --muted: #9cb0c3;
+      --line: #25415b;
+      --cyan: #35d0ba;
+      --gold: #e4b85c;
+      --blue: #66a9ff;
+      --violet: #a88cff;
+      --red: #ff7d85;
+      --green-bg: rgba(53, 208, 186, .09);
+      --gold-bg: rgba(228, 184, 92, .09);
+      --shadow: 0 18px 55px rgba(0, 0, 0, .28);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% -8%, rgba(53, 208, 186, .16), transparent 29rem),
+        radial-gradient(circle at 90% 5%, rgba(102, 169, 255, .12), transparent 32rem),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
+    code { color: #b9e9ff; }
+    .wrap { width: min(1180px, calc(100% - 36px)); margin: 0 auto; }
+
+    header {
+      padding: 70px 0 42px;
+      border-bottom: 1px solid rgba(156, 176, 195, .16);
+    }
+    .eyebrow {
+      color: var(--cyan);
+      font-weight: 750;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      font-size: .76rem;
+    }
+    h1 { margin: 12px 0 14px; max-width: 850px; font-size: clamp(2.45rem, 7vw, 5.4rem); line-height: .99; letter-spacing: -.055em; }
+    h1 span { color: var(--gold); }
+    .lead { max-width: 800px; margin: 0; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.28rem); }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 27px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(13, 27, 42, .68);
+      color: #c9d7e4;
+      font-size: .84rem;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 14px var(--cyan); }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(7, 17, 31, .89);
+      border-bottom: 1px solid rgba(156, 176, 195, .14);
+      backdrop-filter: blur(14px);
+    }
+    nav .wrap { display: flex; gap: 4px; overflow-x: auto; padding-top: 10px; padding-bottom: 10px; scrollbar-width: thin; }
+    nav a { flex: 0 0 auto; padding: 7px 10px; border-radius: 8px; color: var(--muted); font-size: .84rem; }
+    nav a:hover { color: var(--ink); background: var(--panel); text-decoration: none; }
+
+    main { padding: 34px 0 80px; }
+    section { scroll-margin-top: 72px; margin-top: 58px; }
+    h2 { margin: 0 0 8px; font-size: clamp(1.7rem, 4vw, 2.35rem); letter-spacing: -.035em; }
+    h3 { margin: 0 0 8px; font-size: 1.08rem; }
+    .section-intro { max-width: 800px; margin: 0 0 25px; color: var(--muted); }
+
+    .grid { display: grid; gap: 16px; }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(16, 36, 57, .94), rgba(10, 25, 40, .94));
+      box-shadow: var(--shadow);
+    }
+    .card p:last-child { margin-bottom: 0; }
+    .card .num { display: block; margin-bottom: 13px; color: var(--gold); font-size: 1.7rem; font-weight: 800; line-height: 1; }
+    .muted { color: var(--muted); }
+    .accent { color: var(--cyan); }
+
+    .callout {
+      margin: 22px 0;
+      padding: 18px 20px;
+      border: 1px solid rgba(228, 184, 92, .4);
+      border-left: 4px solid var(--gold);
+      border-radius: 12px;
+      background: var(--gold-bg);
+    }
+    .callout strong { color: #f1cc7d; }
+    .callout.info { border-color: rgba(53, 208, 186, .35); border-left-color: var(--cyan); background: var(--green-bg); }
+    .callout.info strong { color: var(--cyan); }
+
+    .diagram {
+      overflow-x: auto;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #081522;
+      box-shadow: var(--shadow);
+    }
+    svg { display: block; width: 100%; min-width: 920px; height: auto; }
+    .svg-title { fill: #edf7ff; font: 700 16px Inter, sans-serif; }
+    .svg-text { fill: #b4c5d4; font: 13px Inter, sans-serif; }
+    .svg-small { fill: #88a0b4; font: 11px Inter, sans-serif; }
+    .svg-box { fill: #102439; stroke: #31536f; stroke-width: 1.5; }
+    .svg-core { fill: #12363a; stroke: #35d0ba; stroke-width: 2; }
+    .svg-rag { fill: #342e1d; stroke: #e4b85c; stroke-width: 2; }
+    .svg-llm { fill: #26233e; stroke: #a88cff; stroke-width: 2; }
+    .svg-unused { fill: #172331; stroke: #71879a; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .svg-arrow { stroke: #6f879a; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .svg-arrow-gold { stroke: #e4b85c; stroke-width: 1.8; fill: none; marker-end: url(#arrow-gold); }
+    .svg-arrow-violet { stroke: #a88cff; stroke-width: 1.8; fill: none; marker-end: url(#arrow-violet); }
+
+    .steps { counter-reset: step; display: grid; gap: 12px; }
+    .step {
+      position: relative;
+      padding: 17px 18px 17px 62px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(13, 27, 42, .78);
+    }
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 17px;
+      top: 16px;
+      display: grid;
+      width: 29px;
+      height: 29px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--cyan);
+      color: #04201e;
+      font-weight: 850;
+    }
+    .step p { margin: 3px 0 0; color: var(--muted); }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 15px; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; background: rgba(13, 27, 42, .72); }
+    th, td { padding: 13px 15px; border-bottom: 1px solid rgba(37, 65, 91, .78); text-align: left; vertical-align: top; }
+    th { color: var(--cyan); background: #0b1a29; font-size: .76rem; letter-spacing: .08em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    td { font-size: .91rem; }
+
+    .formula {
+      padding: 22px;
+      text-align: center;
+      border-radius: 14px;
+      border: 1px solid rgba(228, 184, 92, .35);
+      color: #f4d590;
+      background: rgba(35, 31, 21, .8);
+      font: 600 clamp(.9rem, 2vw, 1.15rem) "Cascadia Code", monospace;
+    }
+
+    pre {
+      margin: 14px 0 0;
+      padding: 17px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #050d17;
+      color: #c8e7f5;
+      font-size: .85rem;
+      line-height: 1.55;
+    }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: .73rem; font-weight: 750; }
+    .tag.active { color: #7ce6d5; background: rgba(53, 208, 186, .12); border: 1px solid rgba(53, 208, 186, .35); }
+    .tag.partial { color: #f0cc7f; background: rgba(228, 184, 92, .12); border: 1px solid rgba(228, 184, 92, .35); }
+    .tag.prep { color: #b9c5cf; background: rgba(156, 176, 195, .09); border: 1px solid rgba(156, 176, 195, .28); }
+    .severity { font-weight: 800; }
+    .severity.high { color: var(--red); }
+    .severity.med { color: var(--gold); }
+    .severity.low { color: var(--blue); }
+
+    footer { padding: 30px 0 50px; border-top: 1px solid rgba(156, 176, 195, .14); color: var(--muted); font-size: .86rem; }
+    @media (max-width: 850px) {
+      .grid-3, .grid-2 { grid-template-columns: 1fr; }
+      header { padding-top: 48px; }
+      .wrap { width: min(100% - 24px, 1180px); }
+    }
+    @media print {
+      :root { --bg: #fff; --panel: #fff; --panel-2: #f7f9fb; --ink: #13202b; --muted: #4d5d6a; --line: #ccd6df; }
+      body { background: #fff; }
+      nav { display: none; }
+      .card, .diagram { box-shadow: none; background: #fff; break-inside: avoid; }
+      section { break-inside: auto; }
+      .svg-box, .svg-core, .svg-rag, .svg-llm, .svg-unused { fill: #f7f9fb; }
+      .svg-title { fill: #152430; }
+      .svg-text, .svg-small { fill: #415463; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="eyebrow">Documento técnico · componente de chat</div>
+      <h1>Chat analítico y <span>RAG local</span></h1>
+      <p class="lead">Cómo una pregunta pasa por reglas deterministas, datos reales, recuperación TF‑IDF y, solo como respaldo, un LLM externo.</p>
+      <div class="meta">
+        <span class="pill"><span class="dot"></span> Estado analizado: código actual</span>
+        <span class="pill">API: FastAPI</span>
+        <span class="pill">Retrieval: TF‑IDF + coseno</span>
+        <span class="pill">LLM: opcional</span>
+        <span class="pill">Idioma: español</span>
+      </div>
+    </div>
+  </header>
+
+  <nav aria-label="Índice">
+    <div class="wrap">
+      <a href="#resumen">Resumen</a>
+      <a href="#arquitectura">Arquitectura</a>
+      <a href="#flujo">Flujo</a>
+      <a href="#intents">Intents</a>
+      <a href="#rag">RAG</a>
+      <a href="#llm">LLM</a>
+      <a href="#contratos">Contrato</a>
+      <a href="#archivos">Archivos</a>
+      <a href="#hallazgos">Hallazgos</a>
+    </div>
+  </nav>
+
+  <main class="wrap">
+    <section id="resumen">
+      <h2>Resumen ejecutivo</h2>
+      <p class="section-intro">El chat no es un agente conversacional libre. Es un orquestador de respuestas de una sola pregunta, diseñado para privilegiar evidencia local y evitar alucinaciones sobre la partida.</p>
+      <div class="grid grid-3">
+        <article class="card">
+          <span class="num">01</span>
+          <h3>Primero: reglas</h3>
+          <p class="muted"><code>ChatService</code> normaliza la pregunta, busca el primer patrón regex compatible y ejecuta un handler especializado.</p>
+        </article>
+        <article class="card">
+          <span class="num">02</span>
+          <h3>Luego: datos reales</h3>
+          <p class="muted">Los handlers componen información del estado en vivo, recomendaciones, historial, Riot API, Data Dragon y análisis postpartida.</p>
+        </article>
+        <article class="card">
+          <span class="num">03</span>
+          <h3>Finalmente: conocimiento o LLM</h3>
+          <p class="muted">Las preguntas básicas consultan un corpus TF‑IDF. Si no hay coincidencia suficiente, el LLM opcional intenta responder.</p>
+        </article>
+      </div>
+      <div class="callout">
+        <strong>Conclusión precisa:</strong> el sistema implementa RAG generativo cuando hay un LLM configurado: recupera hasta tres pasajes y los agrega al prompt. Sin LLM, conserva una degradación extractiva y devuelve el mejor pasaje local.
+      </div>
+    </section>
+
+    <section id="arquitectura">
+      <h2>Diagrama de arquitectura</h2>
+      <p class="section-intro">Las flechas continuas representan conexiones activas. Los cuadros punteados son piezas existentes pero no conectadas a la respuesta actual.</p>
+      <div class="diagram" role="img" aria-label="Diagrama de arquitectura del chat">
+        <svg viewBox="0 0 1120 690" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#6f879a"/></marker>
+            <marker id="arrow-gold" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#e4b85c"/></marker>
+            <marker id="arrow-violet" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#a88cff"/></marker>
+          </defs>
+
+          <text x="35" y="34" class="svg-small">CAPA DE PRESENTACIÓN</text>
+          <rect x="35" y="50" width="205" height="75" rx="13" class="svg-box"/>
+          <text x="55" y="79" class="svg-title">ChatPanel.jsx</text>
+          <text x="55" y="102" class="svg-text">Pregunta + fuentes</text>
+
+          <rect x="305" y="50" width="205" height="75" rx="13" class="svg-box"/>
+          <text x="325" y="79" class="svg-title">POST /api/chat</text>
+          <text x="325" y="102" class="svg-text">routes_chat.py</text>
+          <path d="M240 88 H305" class="svg-arrow"/>
+
+          <rect x="575" y="50" width="225" height="75" rx="13" class="svg-core"/>
+          <text x="595" y="79" class="svg-title">ChatService.answer()</text>
+          <text x="595" y="102" class="svg-text">Router determinista</text>
+          <path d="M510 88 H575" class="svg-arrow"/>
+
+          <text x="35" y="176" class="svg-small">ORQUESTACIÓN Y FUENTES DE VERDAD</text>
+          <rect x="35" y="195" width="210" height="84" rx="13" class="svg-box"/>
+          <text x="55" y="224" class="svg-title">Live state</text>
+          <text x="55" y="247" class="svg-text">Snapshot + recomendaciones</text>
+          <text x="55" y="266" class="svg-small">Live Client / Spectator</text>
+
+          <rect x="280" y="195" width="210" height="84" rx="13" class="svg-box"/>
+          <text x="300" y="224" class="svg-title">MatchRepository</text>
+          <text x="300" y="247" class="svg-text">Historial de partidas</text>
+          <text x="300" y="266" class="svg-small">Perfiles y estadísticas</text>
+
+          <rect x="525" y="195" width="210" height="84" rx="13" class="svg-box"/>
+          <text x="545" y="224" class="svg-title">Riot + Data Dragon</text>
+          <text x="545" y="247" class="svg-text">Jugador y campeón</text>
+          <text x="545" y="266" class="svg-small">API remota + caché</text>
+
+          <rect x="770" y="195" width="210" height="84" rx="13" class="svg-box"/>
+          <text x="790" y="224" class="svg-title">Review / ML</text>
+          <text x="790" y="247" class="svg-text">Patrones y probabilidad</text>
+          <text x="790" y="266" class="svg-small">Análisis especializado</text>
+
+          <path d="M640 125 C620 158,140 154,140 195" class="svg-arrow"/>
+          <path d="M665 125 C645 165,385 160,385 195" class="svg-arrow"/>
+          <path d="M690 125 C700 158,630 165,630 195" class="svg-arrow"/>
+          <path d="M715 125 C760 154,875 160,875 195" class="svg-arrow"/>
+
+          <text x="35" y="330" class="svg-small">RUTA DE CONOCIMIENTO GENERAL</text>
+          <rect x="155" y="350" width="260" height="102" rx="13" class="svg-rag"/>
+          <text x="178" y="379" class="svg-title">GameKnowledgeBase</text>
+          <text x="178" y="403" class="svg-text">11 documentos → TF‑IDF</text>
+          <text x="178" y="425" class="svg-text">Top‑3 + score + cobertura</text>
+          <path d="M630 125 C590 290,370 285,300 350" class="svg-arrow-gold"/>
+
+          <rect x="495" y="350" width="270" height="102" rx="13" class="svg-llm"/>
+          <text x="518" y="379" class="svg-title">LLMClient (opcional)</text>
+          <text x="518" y="403" class="svg-text">Pregunta abierta / miss del corpus</text>
+          <text x="518" y="425" class="svg-text">Gemini, Groq, OpenRouter, OpenAI</text>
+          <path d="M415 401 H495" class="svg-arrow-violet"/>
+          <text x="426" y="390" class="svg-small">pasajes</text>
+
+          <rect x="845" y="350" width="240" height="102" rx="13" class="svg-box"/>
+          <text x="868" y="379" class="svg-title">Proveedor externo</text>
+          <text x="868" y="403" class="svg-text">/chat/completions</text>
+          <text x="868" y="425" class="svg-small">503 Gemini → modelo Lite</text>
+          <path d="M765 401 H845" class="svg-arrow-violet"/>
+
+          <text x="35" y="505" class="svg-small">PIEZAS PREPARATORIAS (NO CONECTADAS AL FLUJO DE RESPUESTA)</text>
+          <rect x="155" y="525" width="310" height="102" rx="13" class="svg-unused"/>
+          <text x="178" y="554" class="svg-title">ChatContextBuilder</text>
+          <text x="178" y="578" class="svg-text">Agrupa snapshot, historial, recomendaciones</text>
+          <text x="178" y="602" class="svg-small">Se instancia, pero no se consume</text>
+
+          <rect x="555" y="525" width="310" height="102" rx="13" class="svg-unused"/>
+          <text x="578" y="554" class="svg-title">prompt_builder.build_prompt</text>
+          <text x="578" y="578" class="svg-text">Reduce contexto y genera system/user</text>
+          <text x="578" y="602" class="svg-small">No es llamado por ChatService ni LLMClient</text>
+          <path d="M465 576 H555" stroke="#71879a" stroke-width="1.5" stroke-dasharray="6 5" fill="none" marker-end="url(#arrow)"/>
+        </svg>
+      </div>
+    </section>
+
+    <section id="flujo">
+      <h2>Flujo de una solicitud</h2>
+      <p class="section-intro">El orden importa: los intents se evalúan de arriba abajo y gana la primera expresión regular que coincide.</p>
+      <div class="steps">
+        <article class="step"><h3>Entrada y validación</h3><p>El frontend envía <code>{"question": "..."}</code> a <code>POST /api/chat</code>. Pydantic exige entre 1 y 500 caracteres.</p></article>
+        <article class="step"><h3>Normalización</h3><p><code>_norm()</code> convierte a minúsculas y elimina acentos mediante Unicode NFD. Esto permite que “línea” y “linea” coincidan con la misma regla.</p></article>
+        <article class="step"><h3>Clasificación determinista</h3><p><code>answer()</code> recorre <code>INTENTS</code>. Al encontrar una regex válida invoca dinámicamente <code>_handle_&lt;intent&gt;</code>.</p></article>
+        <article class="step"><h3>Obtención y composición</h3><p>El handler consulta únicamente las fuentes necesarias. La respuesta se construye con plantillas de Python; para datos sensibles de la partida no interviene un generador libre.</p></article>
+        <article class="step"><h3>Ruta de conocimiento</h3><p>En <code>game_basics</code> y antes del fallback general, el corpus recupera hasta tres entradas. Exige score mínimo 0.12, cobertura de términos 0.60 y coincidencia con un título o tag; con LLM genera sobre esos pasajes y sin LLM devuelve el mejor.</p></article>
+        <article class="step"><h3>Compuerta de dominio</h3><p>Antes de enviar un fallback al LLM, <code>_is_lol_question()</code> exige un término específico de LoL, una frase conocida, un Riot ID o un nombre completo de campeón. Las consultas externas reciben un mensaje local y no consumen tokens.</p></article>
+        <article class="step"><h3>Respuesta uniforme</h3><p>Todos los caminos terminan en un objeto con <code>answer</code>, <code>intent</code>, disponibilidad, fuentes y tipo de fuente. La UI muestra el texto y las fuentes.</p></article>
+      </div>
+      <div class="callout info"><strong>Tolerancia a fallos:</strong> una excepción dentro de un handler se captura, se registra y produce una respuesta honesta con <code>data_available=false</code>. Un fallo del LLM también vuelve a una respuesta local o de ayuda.</div>
+    </section>
+
+    <section id="intents">
+      <h2>Mapa de intents y fuentes</h2>
+      <p class="section-intro">La tabla resume la decisión funcional. “Mixto” significa que el resultado puede combinar estado actual con historial o inferencia.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Intent</th><th>Qué responde</th><th>Fuente principal</th><th>Dependencia</th></tr></thead>
+          <tbody>
+            <tr><td><code>match_review</code></td><td>Resumen y puntos de inflexión de la última partida</td><td>Timeline Match‑V5 + método de revisión</td><td>PUUID y review service</td></tr>
+            <tr><td><code>weekly_patterns</code></td><td>Tendencias de hasta 20 partidas</td><td>Timeline + histórico</td><td>PUUID y review service</td></tr>
+            <tr><td><code>item</code></td><td>Hasta tres opciones de compra razonadas</td><td>RecommendationEngine</td><td>Recomendaciones activas</td></tr>
+            <tr><td><code>gank</code></td><td>Líneas priorizadas</td><td>Live Client + histórico</td><td>Partida activa</td></tr>
+            <tr><td><code>damage_type</code></td><td>Perfil de daño y defensa de un campeón</td><td>Data Dragon</td><td>Campeón explícito o rival directo</td></tr>
+            <tr><td><code>rival_champion_games</code></td><td>Partidas y victorias con un campeón</td><td>Histórico / Match‑V5</td><td>Riot ID o rival actual</td></tr>
+            <tr><td><code>rival_top_champions</code></td><td>Campeones principales y métricas</td><td>Riot API o histórico local</td><td>Perfil resoluble</td></tr>
+            <tr><td><code>rival_main_role</code></td><td>Rol más frecuente</td><td>Riot API o histórico local</td><td>Perfil resoluble</td></tr>
+            <tr><td><code>style</code></td><td>Estilo propio o de otro jugador</td><td>Clasificador + histórico</td><td>Partidas suficientes</td></tr>
+            <tr><td><code>objective</code></td><td>Objetivos priorizados</td><td>Recomendaciones en vivo</td><td>Partida activa</td></tr>
+            <tr><td><code>win_probability</code></td><td>Probabilidad, confianza y método</td><td>RecommendationEngine / ML</td><td>Partida activa</td></tr>
+            <tr><td><code>player_profile</code></td><td>Rol, forma, estilo y campeones</td><td>Riot API o histórico local</td><td>Riot ID o rival actual</td></tr>
+            <tr><td><code>game_basics</code></td><td>Conceptos generales</td><td>RAG local; después LLM</td><td>Corpus o LLM configurado</td></tr>
+            <tr><td><code>fallback</code></td><td>Pregunta abierta o ayuda</td><td>LLM; después texto fijo</td><td>LLM opcional</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">La resolución de jugador prioriza un Riot ID escrito en la pregunta. Si no existe, usa el rival directo de la partida. Con API disponible consulta <code>OpponentScout</code>; sin ella intenta el repositorio local.</p>
+    </section>
+
+    <section id="rag">
+      <h2>Cómo se realiza el RAG local</h2>
+      <p class="section-intro">El archivo <code>game_knowledge.py</code> contiene once documentos sobre prioridad, objetivos, gank, visión, tempo y lore básico de Runaterra, Diana y Nasus.</p>
+      <div class="grid grid-2">
+        <article class="card">
+          <h3>Indexación al iniciar</h3>
+          <p class="muted">Cada documento concatena <code>title + text + tags</code>. <code>TfidfVectorizer</code> normaliza minúsculas, elimina acentos y crea unigramas y bigramas con <code>ngram_range=(1, 2)</code>.</p>
+          <pre>documento = título + texto + tags
+matriz = TF_IDF.fit_transform(documentos)</pre>
+        </article>
+        <article class="card">
+          <h3>Recuperación por pregunta</h3>
+          <p class="muted">La pregunta se transforma con el vocabulario ya entrenado. Se calcula similitud coseno contra toda la matriz y se selecciona únicamente el mejor documento.</p>
+          <pre>query  = vectorizer.transform([question])
+scores = cosine_similarity(query, matrix)[0]
+best   = argmax(scores)</pre>
+        </article>
+      </div>
+      <div class="formula">resultados = Top‑3(coseno(query, docs)) si score ≥ 0.12 y cobertura ≥ 0.60</div>
+      <div class="diagram" style="margin-top:16px" role="img" aria-label="Pipeline del RAG local">
+        <svg viewBox="0 0 1100 285" xmlns="http://www.w3.org/2000/svg">
+          <defs><marker id="r-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#e4b85c"/></marker></defs>
+          <rect x="25" y="88" width="165" height="82" rx="13" class="svg-box"/><text x="45" y="120" class="svg-title">Pregunta</text><text x="45" y="145" class="svg-text">“¿Qué es tempo?”</text>
+          <path d="M190 129 H245" stroke="#e4b85c" stroke-width="1.8" marker-end="url(#r-arrow)"/>
+          <rect x="245" y="88" width="185" height="82" rx="13" class="svg-rag"/><text x="265" y="120" class="svg-title">Vector TF‑IDF</text><text x="265" y="145" class="svg-text">1‑gramas + 2‑gramas</text>
+          <path d="M430 129 H485" stroke="#e4b85c" stroke-width="1.8" marker-end="url(#r-arrow)"/>
+          <rect x="485" y="70" width="190" height="118" rx="13" class="svg-rag"/><text x="505" y="104" class="svg-title">Ranking + cobertura</text><text x="505" y="130" class="svg-text">vs. 11 documentos</text><text x="505" y="155" class="svg-text">selecciona Top‑3 válidos</text>
+          <path d="M675 129 H730" stroke="#e4b85c" stroke-width="1.8" marker-end="url(#r-arrow)"/>
+          <rect x="730" y="28" width="330" height="78" rx="13" class="svg-core"/><text x="750" y="60" class="svg-title">Pasajes válidos</text><text x="750" y="84" class="svg-text">LLM contextual o respuesta extractiva</text>
+          <rect x="730" y="158" width="330" height="78" rx="13" class="svg-llm"/><text x="750" y="190" class="svg-title">Sin pasajes válidos</text><text x="750" y="214" class="svg-text">LLM general; si falla, mensaje local</text>
+          <path d="M700 129 C715 129,712 67,730 67" stroke="#35d0ba" stroke-width="1.8" fill="none" marker-end="url(#r-arrow)"/>
+          <path d="M700 129 C715 129,712 197,730 197" stroke="#a88cff" stroke-width="1.8" fill="none" marker-end="url(#r-arrow)"/>
+        </svg>
+      </div>
+      <div class="callout">
+        <strong>Control contra falsos positivos:</strong> además del score TF‑IDF, cada candidato debe cubrir al menos 60% de los términos significativos. Así, “color del Barón” no acepta un documento que solo coincide con “Barón”. Las stopwords españolas tampoco aportan similitud artificial.
+      </div>
+    </section>
+
+    <section id="llm">
+      <h2>Ruta del LLM y degradación controlada</h2>
+      <p class="section-intro"><code>LLMClient</code> usa una interfaz compatible con OpenAI y se configura mediante <code>LLM_PROVIDER</code>, <code>LLM_API_KEY</code> y, opcionalmente, <code>LLM_MODEL</code>.</p>
+      <div class="grid grid-2">
+        <article class="card">
+          <h3>Filtro previo</h3>
+          <p class="muted">Una pregunta claramente externa, como “¿qué es Kubeflow?”, devuelve <code>out_of_scope</code> sin llamar al proveedor. Los nombres de campeón se comparan como palabras completas para evitar falsos positivos como <code>Vi</code> dentro de “servicio”.</p>
+        </article>
+        <article class="card">
+          <h3>Cuándo se llama</h3>
+          <p class="muted">Solo en un miss de <code>game_basics</code> o cuando ninguna regex reconoce la pregunta. Las respuestas deterministas de items, historial, partida y ML no pasan por el LLM.</p>
+        </article>
+        <article class="card">
+          <h3>Qué recibe</h3>
+          <p class="muted">Un system prompt de coach, la pregunta y, cuando hubo recuperación válida, los pasajes con sus títulos mediante <code>context_note</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Fallback de Gemini</h3>
+          <p class="muted">Si el modelo primario devuelve HTTP 503, se repite una vez con <code>gemini-flash-lite-latest</code>. No se cambia de modelo para errores no transitorios.</p>
+        </article>
+        <article class="card">
+          <h3>Fallo seguro</h3>
+          <p class="muted">Timeout, error de red, JSON inválido o respuesta no exitosa producen <code>None</code>. El chat vuelve entonces al mensaje local disponible.</p>
+        </article>
+      </div>
+      <pre>pregunta abierta
+  ├─ fuera de LoL → mensaje local; no llama al proveedor
+  └─ dentro de LoL + LLM configurado y con API key
+       ├─ 200 → respuesta + aviso “generada por IA”
+       ├─ Gemini 503 → retry con Flash Lite
+       └─ otro fallo → None → respuesta local / ayuda</pre>
+    </section>
+
+    <section id="contratos">
+      <h2>Contrato HTTP y trazabilidad</h2>
+      <div class="grid grid-2">
+        <article class="card">
+          <h3>Solicitud</h3>
+          <pre>POST /api/chat
+Content-Type: application/json
+
+{
+  "question": "¿Qué objetivo debo priorizar?"
+}</pre>
+        </article>
+        <article class="card">
+          <h3>Respuesta</h3>
+          <pre>{
+  "answer": "...",
+  "intent": "objective",
+  "data_available": true,
+  "sources": ["live_client"],
+  "data_source": "mixto"
+}</pre>
+        </article>
+      </div>
+      <p class="muted"><code>GET /api/chat/proactive</code> reutiliza el mismo contrato. Selecciona una recomendación fuerte de gank, objetivo o item; si no existe, emite un consejo general o informa que no hay partida activa.</p>
+    </section>
+
+    <section id="archivos">
+      <h2>Responsabilidad por archivo</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Archivo</th><th>Estado</th><th>Responsabilidad real</th></tr></thead>
+          <tbody>
+            <tr><td><code>app/chat/__init__.py</code></td><td><span class="tag prep">Vacío</span></td><td>Marca el directorio como paquete; no exporta símbolos ni ejecuta inicialización.</td></tr>
+            <tr><td><code>chat_service.py</code></td><td><span class="tag active">Activo</span></td><td>Núcleo: routing, resolución de jugador, handlers, composición, RAG y fallback del LLM.</td></tr>
+            <tr><td><code>game_knowledge.py</code></td><td><span class="tag active">Activo</span></td><td>Corpus local, stopwords españolas, TF‑IDF, similitud, cobertura y recuperación Top‑3.</td></tr>
+            <tr><td><code>llm_client.py</code></td><td><span class="tag active">Activo</span></td><td>Adaptador HTTP para cuatro proveedores, prompt de seguridad, timeout y fallback Gemini Lite.</td></tr>
+            <tr><td><code>context_builder.py</code></td><td><span class="tag partial">Instanciado</span></td><td>Construye un contexto rico, pero ninguna ruta de chat llama actualmente a <code>build()</code>.</td></tr>
+            <tr><td><code>prompt_builder.py</code></td><td><span class="tag prep">Preparado</span></td><td>Serializa un contexto reducido para un LLM, pero no tiene consumidores actuales.</td></tr>
+            <tr><td><code>container.py</code></td><td><span class="tag active">Activo</span></td><td>Compone dependencias, caché del estado en vivo, LLM y <code>ChatService</code>.</td></tr>
+            <tr><td><code>routes_chat.py</code></td><td><span class="tag active">Activo</span></td><td>Expone los endpoints reactivo y proactivo mediante FastAPI.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="hallazgos">
+      <h2>Hallazgos y recomendaciones</h2>
+      <p class="section-intro">Observaciones derivadas del cableado real, no solo de los comentarios del código.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Prioridad</th><th>Hallazgo</th><th>Impacto / recomendación</th></tr></thead>
+          <tbody>
+            <tr><td><span class="severity med">Media</span></td><td><code>ChatContextBuilder</code> y <code>build_prompt()</code> no están conectados.</td><td>No asumir que el LLM conoce snapshot o historial. Si se integran, filtrar datos y usar el prompt estricto antes de pasar contexto real.</td></tr>
+            <tr><td><span class="severity low">Baja</span></td><td>La verificación de cobertura es léxica, no una prueba semántica de answerability.</td><td>Evaluar falsos positivos con un conjunto de preguntas y, al crecer el corpus, considerar embeddings o un reranker.</td></tr>
+            <tr><td><span class="severity low">Baja</span></td><td>El LLM recibe pasajes recuperados, pero el constructor general de contexto sigue desconectado.</td><td>Mantener separados los pasajes de conocimiento y los datos de partida; conectar solo campos de juego explícitamente permitidos.</td></tr>
+            <tr><td><span class="severity low">Baja</span></td><td>El score de recuperación se calcula, pero no llega al contrato <code>ChatResponse</code>.</td><td>Agregar metadata opcional si se necesita observabilidad o ajuste empírico del umbral.</td></tr>
+            <tr><td><span class="severity low">Baja</span></td><td>El router regex es first-match y no reporta confianza.</td><td>Añadir pruebas de colisiones al crecer los intents o migrar a un clasificador híbrido manteniendo handlers deterministas.</td></tr>
+            <tr><td><span class="severity low">Baja</span></td><td>La compuerta de dominio usa un vocabulario controlado.</td><td>Revisar términos rechazados en logs y ampliar la lista únicamente con conceptos inequívocos de LoL para evitar abrir temas externos.</td></tr>
+            <tr><td><span class="severity low">Baja</span></td><td>El chat es stateless: cada petición contiene una sola pregunta.</td><td>Es adecuado para seguridad y simplicidad; si se añade memoria, delimitar sesión, caducidad y datos permitidos.</td></tr>
+            <tr><td><span class="severity low">Baja</span></td><td>El corpus sigue siendo pequeño y estático, aunque ahora recupera Top‑3.</td><td>Para crecer: cargar documentos versionados, evaluar precision@k, cobertura y calidad final con preguntas reales.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout info">
+        <strong>Fortaleza principal:</strong> la separación entre datos de juego deterministas y generación abierta reduce el riesgo de inventar oro, items, historial o estado en vivo. La respuesta también conserva intent y fuentes, lo que facilita depuración y transparencia en UI.
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">Documentación generada a partir de la implementación del componente <code>app/chat</code> y su cableado en API, contenedor y frontend.</div>
+  </footer>
+</body>
+</html>

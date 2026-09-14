@@ -1,0 +1,112 @@
+================================================================
+ LoL RECOMMENDER - INSTRUCCIONES DE REEJECUCION
+ (como ver los datos de otro jugador)
+================================================================
+
+Hay DOS formas de consultar a otro jugador. La primera no requiere
+reiniciar nada; la segunda cambia "quien eres" para toda la app.
+
+
+----------------------------------------------------------------
+ OPCION A - Consultar a cualquier jugador SIN reiniciar
+----------------------------------------------------------------
+Con la app ya corriendo (http://127.0.0.1:8000):
+
+  1. Panel "BUSCAR JUGADOR (analiticas de cualquier invocador)":
+     escribe su Riot ID (ej. Faker#KR1) y pulsa Buscar.
+     - Funciona para CUALQUIER region (LAN, EUW, KR...): la app
+       detecta la region del jugador automaticamente.
+     - No hace falta que ese jugador este jugando ni que este en
+       tu maquina.
+
+  2. Chatbot (panel derecho): pregunta con su Riot ID, ej.:
+     - "perfil de Faker#KR1"
+     - "campeones mas jugados de EST JimRising#LANNN"
+     - "que linea juega Nombre#TAG"
+
+  (El antiguo reentrenamiento por jugador se elimino junto con el
+   modelo pregame: rendia como una moneda. Los modelos que si se
+   usan son por campeon: --mode train-champion.)
+
+
+----------------------------------------------------------------
+ OPCION B - Cambiar la CUENTA PRINCIPAL de la app (requiere reinicio)
+----------------------------------------------------------------
+La cuenta principal es la que usa el dashboard: perfil superior,
+historial, deteccion de partida activa y recomendaciones en vivo.
+
+  1. DETENER el servidor actual:
+     - Si lo lanzaste tu: Ctrl+C en esa terminal (o cierrala).
+     - Solo puede haber UNA instancia en el puerto 8000.
+
+  2. EDITAR el archivo .env (esta carpeta) y cambiar SOLO:
+        GAME_NAME=NombreDelJugador
+        TAG_LINE=TAG
+     NO hace falta tocar PLATFORM_ROUTING ni REGIONAL_ROUTING:
+     la region real de la cuenta se autodetecta al arrancar
+     (veras en el log: "Routing autodetectado: ...").
+
+  3. RELANZAR:
+        cd c:\Users\I_am_AlexX\Desktop\Workspace\lol_recommender_app
+        python main_orchestrator.py --mode app
+
+        cd C:\Users\I_am_AlexX\Desktop\Workspace\lol_recommender_app
+
+        Luego para iniciar el modo app, ejecutar:
+
+        & ..\venv\Scripts\python.exe main_orchestrator.py --mode app
+
+        ..\venv\Scripts\python.exe main_orchestrator.py --mode ingest-ladder --target-records 100000 --per-player 20 --days 30 --max-players 1200
+        
+        Puede lanzar el error: Ingesta masiva por liga fallida: 401 de Riot: API key invalida o expirada. Genera una nueva en developer.riotgames.com y actualiza tu .env.
+        en cuyo caso debe actualziarse la API de RIOT en .env
+
+
+     Deja esa terminal ABIERTA (si la cierras, el navegador dira
+     "no se puede acceder al sitio").
+
+  4. Abrir http://127.0.0.1:8000 (se abre solo normalmente).
+
+  5. (Opcional) Entrenar los modelos del campeon que vas a jugar
+     (item + in-game; se reutilizan mientras no cambie el parche):
+        cd C:\Users\I_am_AlexX\Desktop\Workspace\lol_recommender_app
+        & ..\venv\Scripts\python.exe main_orchestrator.py --mode train-champion --champion Nombre --target-tier GOLD
+
+     Alternativa sin comandos: en la aplicacion abre el boton
+     "Ajuste de couch AI". Selecciona el campeon escribiendo las primeras
+     letras o desde la lista alfabetica, elige la liga y los procesos.
+     La pantalla muestra el tiempo estimado antes de iniciar. Los tamanos de
+     ingesta, ventana de dias y reentrenamiento forzado estan en
+     "Ajustes avanzados" con valores predeterminados seguros.
+
+
+----------------------------------------------------------------
+ DETECCION DE PARTIDA EN VIVO
+----------------------------------------------------------------
+  - Juego abierto EN ESTA maquina  -> Live Client Data API
+    (datos completos: kills, oro, items, niveles).
+  - Juego en OTRA maquina          -> Spectator-V5 automatico
+    (composicion real, probabilidad de victoria e items; sin
+    kills/oro porque Riot no los expone fuera del cliente).
+  - Spectator solo reporta cuando la partida YA ARRANCO (no en
+    champ select ni pantalla de carga); puede tardar 1-3 min.
+
+
+----------------------------------------------------------------
+ PROBLEMAS FRECUENTES
+----------------------------------------------------------------
+  - "No se puede acceder al sitio": el servidor no esta corriendo.
+    Relanza con el paso 3 de la Opcion B.
+  - Error 401/403 de Riot: la RIOT_API_KEY caduco (las development
+    keys expiran cada 24 h). Genera una nueva en
+    https://developer.riotgames.com y actualiza el .env; reinicia.
+  - "No hay partida activa" aunque este jugando: espera 1-2 min
+    tras el inicio real de la partida; verifica que la cuenta del
+    .env sea exactamente la que esta jugando.
+  - Otros comandos utiles:
+        python main_orchestrator.py --mode ingest-history   (descargar mas historial)
+        python main_orchestrator.py --mode ingest-ladder --target-records 100000 --per-player 20 --days 30 --max-players 1200
+            (ampliar dataset homogeneo: 20 ranked del ultimo mes por jugador; luego ejecutar --mode train-champion)
+        python main_orchestrator.py --mode ingest-timelines (timelines para el modelo in-game)
+        python main_orchestrator.py --mode live-check       (diagnostico en vivo)
+================================================================

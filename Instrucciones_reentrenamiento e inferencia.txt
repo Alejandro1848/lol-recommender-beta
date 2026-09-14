@@ -1,0 +1,270 @@
+================================================================
+ LoL RECOMMENDER - INSTRUCCIONES DE REENTRENAMIENTO E INFERENCIA
+ Para un campeon nuevo o sin datos suficientes en la base local
+================================================================
+
+Carpeta de trabajo:
+
+  cd C:\Users\I_am_AlexX\Desktop\Workspace\lol_recommender_app
+
+En PowerShell usa siempre el Python del entorno virtual:
+
+  & ..\venv\Scripts\python.exe ...
+
+Antes de empezar:
+
+  1. Verifica que .env tenga una RIOT_API_KEY vigente.
+     Las development keys de Riot suelen caducar; si ves 401/403,
+     genera una nueva en developer.riotgames.com y actualiza .env.
+
+  2. Decide el campeon y liga objetivo.
+     Ejemplo:
+       Campeon: Diana
+       Liga: GOLD
+
+  3. Instala o actualiza dependencias si cambiaste requirements.txt:
+
+       & ..\venv\Scripts\python.exe -m pip install -r requirements.txt
+
+
+----------------------------------------------------------------
+ CASO A - Ya hay datos del campeon en la DB
+----------------------------------------------------------------
+
+Si la base ya tiene partidas y timelines del campeon, entrena directo:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode train-champion --champion Diana --target-tier GOLD
+
+Esto genera, si hay datos suficientes:
+
+  models\champions\Diana\GOLD\item_model_*.joblib
+  models\champions\Diana\GOLD\item_model_*.json
+  models\champions\Diana\GOLD\live_model_*.joblib
+  models\champions\Diana\GOLD\live_model_*.json
+  models\champions\Diana\GOLD\item_metric_comparison.png
+  models\champions\Diana\GOLD\live_metric_comparison.png
+  models\champions\Diana\GOLD\live_auc_by_minute.png
+
+El item_model alimenta recomendaciones de items.
+El live_model alimenta la probabilidad de victoria in-game.
+
+
+----------------------------------------------------------------
+ CASO B - No hay info del campeon en la DB
+----------------------------------------------------------------
+
+Cuando un campeon no aparece en la base local, primero hay que traer
+partidas ranked recientes de jugadores de la liga objetivo. La ingesta
+por liga no pide "solo Diana"; toma muchos jugadores de GOLD y sus
+partidas recientes. Con suficientes partidas, empiezan a aparecer
+ejemplos de Diana.
+
+Paso 1 - Ampliar el dataset por liga:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode ingest-ladder --target-tier GOLD --target-records 100000 --per-player 20 --days 30 --max-players 1200
+
+Que significan esos parametros:
+
+  --target-tier GOLD       Liga objetivo.
+  --target-records 100000  Filas/participantes objetivo aproximadas.
+  --per-player 20         Partidas ranked recientes por jugador semilla.
+  --days 30               Ventana reciente en dias.
+  --max-players 1200      Maximo de jugadores de liga a muestrear.
+
+Si el campeon es raro o sigue faltando informacion, sube el volumen:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode ingest-ladder --target-tier GOLD --target-records 200000 --per-player 30 --days 45 --max-players 2000
+
+Paso 2 - Descargar timelines para el campeon:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode ingest-timelines --champion Diana
+
+Este paso descarga el minuto a minuto de las partidas donde la DB ya
+identifico a Diana. Es necesario para entrenar el modelo in-game.
+
+Paso 3 - Entrenar modelos del campeon:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode train-champion --champion Diana --target-tier GOLD
+
+Si el comando dice "Modelo in-game omitido" o "InsufficientDataError",
+normalmente faltan timelines o hay muy pocas partidas del campeon.
+Solucion: repetir Paso 1 con mas volumen, luego Paso 2 y Paso 3.
+
+
+----------------------------------------------------------------
+ CUANDO USAR --force-retrain
+----------------------------------------------------------------
+
+Si ya existe un modelo vigente para el mismo campeon, liga y parche,
+el trainer puede reutilizarlo sin reentrenar.
+
+Para forzar un reentrenamiento despues de haber agregado mas datos:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode train-champion --champion Diana --target-tier GOLD --force-retrain
+
+
+----------------------------------------------------------------
+ VERIFICAR QUE EL MODELO QUEDO CREADO
+----------------------------------------------------------------
+
+Revisa que exista un live_model:
+
+  Get-ChildItem .\models\champions\Diana\GOLD
+
+Debe aparecer algo parecido a:
+
+  item_model_YYYYMMDD_HHMMSS_patchXX-XX_nNNNN.joblib
+  item_model_YYYYMMDD_HHMMSS_patchXX-XX_nNNNN.json
+  live_model_YYYYMMDD_HHMMSS_patchXX-XX_nNNNN.joblib
+  live_model_YYYYMMDD_HHMMSS_patchXX-XX_nNNNN.json
+
+Si falta live_model, la app mostrara:
+
+  "Sin modelo in-game entrenado para este campeon/liga..."
+
+Eso no significa que la app este rota. Significa que todavia no hay
+modelo in-game para esa combinacion exacta de campeon + liga.
+
+
+----------------------------------------------------------------
+ CORRER LA APP E INFERENCIA
+----------------------------------------------------------------
+
+Una vez creado el modelo, arranca o reinicia la app:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode app
+
+Abre:
+
+  http://127.0.0.1:8000
+
+La inferencia se refresca automaticamente cada REFRESH_SECONDS.
+Si el servidor ya estaba abierto mientras entrenaste, detenlo con Ctrl+C,
+vuelve a correr --mode app y recarga el navegador.
+
+
+----------------------------------------------------------------
+ OVERLAY IN-GAME (COACHING DE MOMENTO)
+----------------------------------------------------------------
+
+Ventana ligera siempre-encima que flota sobre el juego y muestra 3 cosas:
+probabilidad actual, proxima accion segun tu rol y compra al volver a base.
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode overlay
+
+Notas:
+
+  - Si --mode app ya corre en otra consola, el overlay solo abre la
+    ventana y usa ese servidor. Si no, levanta uno propio.
+  - El juego debe estar en "Pantalla completa (sin bordes)" o "Ventana"
+    (opciones de video de LoL). En pantalla completa exclusiva Windows
+    tapa cualquier overlay.
+  - Controles: arrastrar = mover, doble clic = compactar,
+    cerrar = solo con la X de la esquina superior derecha.
+  - Version navegador/OBS: http://127.0.0.1:8000/overlay
+  - Los consejos usan el modelo in-game del campeon (si existe), el
+    desempeno observado de aliados/enemigos y los timers de dragon/baron
+    derivados de los eventos del Live Client.
+
+
+----------------------------------------------------------------
+ DIAGNOSTICO EN VIVO
+----------------------------------------------------------------
+
+Para comprobar si la app detecta tu partida:
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode live-check
+
+Interpretacion:
+
+  Live Client Data API disponible:
+    Estas jugando en esta misma maquina. La app puede ver estado completo:
+    kills, oro, items, niveles y tiempo.
+
+  Spectator-V5 partida activa:
+    Riot detecta partida activa por API publica. Sirve para composicion
+    real, pero no expone oro/kills minuto a minuto como el cliente local.
+
+  Sin partida activa:
+    Espera a que la partida haya cargado en el mapa. No cuenta champ select
+    ni pantalla de carga.
+
+
+----------------------------------------------------------------
+ FLUJO COMPLETO RESUMIDO PARA CAMPEON SIN DATOS
+----------------------------------------------------------------
+
+Ejemplo con Diana GOLD:
+
+  cd C:\Users\I_am_AlexX\Desktop\Workspace\lol_recommender_app
+
+  & ..\venv\Scripts\python.exe -m pip install -r requirements.txt
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode ingest-ladder --target-tier GOLD --target-records 100000 --per-player 20 --days 30 --max-players 1200
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode ingest-timelines --champion Diana
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode train-champion --champion Diana --target-tier GOLD
+
+  Get-ChildItem .\models\champions\Diana\GOLD
+
+  & ..\venv\Scripts\python.exe main_orchestrator.py --mode app
+
+
+----------------------------------------------------------------
+ ERRORES FRECUENTES
+----------------------------------------------------------------
+
+Error:
+  No module named 'lightgbm'
+
+Solucion:
+  & ..\venv\Scripts\python.exe -m pip install -r requirements.txt
+
+
+Error:
+  401 de Riot: API key invalida o expirada
+
+Solucion:
+  Genera una nueva RIOT_API_KEY, actualiza .env y repite el comando.
+
+
+Error:
+  Sin modelo in-game entrenado para este campeon/liga
+
+Solucion:
+  1. Asegurate de que existe live_model en:
+       models\champions\<Campeon>\<TIER>
+  2. Si no existe:
+       ingest-ladder -> ingest-timelines -> train-champion
+  3. Reinicia la app con --mode app.
+
+
+Error:
+  El comando ..\venv\Scripts\python.exe no se reconoce
+
+Solucion:
+  Primero entra a la carpeta correcta y usa &:
+
+    cd C:\Users\I_am_AlexX\Desktop\Workspace\lol_recommender_app
+    & ..\venv\Scripts\python.exe main_orchestrator.py --help
+
+
+================================================================
+ NOTAS IMPORTANTES
+================================================================
+
+- --mode app NO reentrena modelos de campeon automaticamente.
+  Solo carga los modelos existentes y hace inferencia.
+
+- --mode train-champion entrena o reutiliza los modelos por campeon.
+
+- --mode ingest-timelines es necesario para el modelo in-game.
+
+- Si entrenas mientras la app esta abierta, reinicia la app para evitar
+  confusion visual y asegurarte de que el navegador esta viendo el estado
+  actualizado.
+
+- La combinacion es exacta: Diana/GOLD no reemplaza Diana/PLATINUM ni
+  Lux/GOLD. Cada campeon y liga tiene su propia carpeta de modelos.
+================================================================
