@@ -1,0 +1,22 @@
+# Allowlist: no local data, models, keys, .env, git history or test outputs.
+**
+!Dockerfile
+!requirements-cloud.txt
+!app/
+!app/**
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/vite.config.js
+!frontend/src/
+!frontend/src/**
+!frontend/public/
+!frontend/public/**
+**/__pycache__/**
+**/*.pyc
+**/.env*
+**/*.pem
+**/*.key
+**/*credentials*.json
+**/*service-account*.json

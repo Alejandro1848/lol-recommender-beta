@@ -1,7 +1,7 @@
 """Ruta de recomendaciones en vivo (items, ganks, objetivos, win prob)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from app.container import ServiceContainer
 from app.data.schemas import Recommendation, RecommendationsResponse, WinProbability
@@ -32,9 +32,11 @@ def _to_schema(raw: dict) -> Recommendation:
 @router.get("/live/recommendations", response_model=RecommendationsResponse)
 def live_recommendations(request: Request, item_style: str = "neutral") -> RecommendationsResponse:
     c = _container(request)
+    if c.settings.public_demo and item_style not in {"neutral", "defensivo", "conservador", "agresivo"}:
+        raise HTTPException(status_code=422, detail="Estilo de compra no valido.")
     snapshot, recommendations = c.live_state()
     if item_style != "neutral":
-        recommendations = c.engine.build(
+        recommendations = c.demo_recommendations(snapshot, item_style) if c.settings.public_demo else c.engine.build(
             snapshot,
             queue_id=c.settings.queue_id,
             item_style=item_style,

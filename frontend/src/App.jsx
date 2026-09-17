@@ -3,6 +3,7 @@ import { api } from './api/client.js'
 import Dashboard from './views/Dashboard.jsx'
 
 const DEFAULT_REFRESH_MS = 15000
+const PUBLIC_DEMO = import.meta.env.VITE_PUBLIC_DEMO === 'true'
 
 export default function App() {
   const [backendUp, setBackendUp] = useState(null)
@@ -31,12 +32,12 @@ export default function App() {
 
   const loadLive = useCallback(async () => {
     try {
-      const status = await api.liveStatus(true)
+      const status = await api.liveStatus(!PUBLIC_DEMO)
       setLiveStatus(status)
       setBackendUp(true)
       if (status.refresh_seconds) {
         const configured = status.refresh_seconds * 1000
-        refreshMs.current = status.in_game && !status.live_client_available
+        refreshMs.current = !PUBLIC_DEMO && status.in_game && !status.live_client_available
           ? Math.min(configured, 3000)
           : configured
       }
@@ -68,6 +69,7 @@ export default function App() {
   return (
     <Dashboard
       backendUp={backendUp}
+      publicDemo={PUBLIC_DEMO}
       profile={profile}
       history={history}
       liveStatus={liveStatus}

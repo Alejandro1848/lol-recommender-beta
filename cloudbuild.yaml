@@ -1,0 +1,9 @@
+# Does not deploy. Explicit service identity must be selected when submitting.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/demo/app:$BUILD_ID', '.']
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/demo/app:$BUILD_ID'
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1200s

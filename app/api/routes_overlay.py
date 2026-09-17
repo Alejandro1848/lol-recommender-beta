@@ -44,7 +44,10 @@ def overlay_state(request: Request) -> dict:
             ),
             "refresh_seconds": 5,
         }
-    payload = c.coach.build(snapshot, recommendations, snapshot_age_seconds=age)
+    payload = c.coach.build(snapshot, recommendations, snapshot_age_seconds=0 if c.settings.public_demo else age)
+    if c.settings.public_demo:
+        payload["refresh_seconds"] = c.settings.refresh_seconds
+        return payload
     # Oro e inventario en tiempo real: el cache puede tener hasta
     # REFRESH_SECONDS de edad y una compra intermedia lo desactualiza.
     try:

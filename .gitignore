@@ -58,6 +58,8 @@ storage/**
 !storage/.gitkeep
 *.log
 *.out
+*.zip
+*.tar.gz
 
 # Imagenes y graficas generadas durante entrenamiento/pruebas
 *.png

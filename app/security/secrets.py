@@ -18,6 +18,8 @@ class MissingSecretError(RuntimeError):
 
 def get_secret(name: str, default: str | None = None) -> str | None:
     """Lee un secreto del entorno. Punto unico de acceso a secretos."""
+    if name == "RIOT_API_KEY" and os.getenv("PUBLIC_DEMO", "").lower() == "true":
+        return None  # La demo publica usa exclusivamente el historial empaquetado.
     value = os.getenv(name, "").strip()
     if value:
         return value

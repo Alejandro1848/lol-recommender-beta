@@ -33,6 +33,15 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if settings.public_demo:
+            # La preparacion termina antes de aceptar trafico. Cloud Run puede
+            # suspender CPU fuera de solicitudes; no usar hilos periodicos aqui.
+            try:
+                await asyncio.to_thread(container.refresh_live_state)
+                yield
+            finally:
+                container.close()
+            return
         # Inferencia periodica: refresca snapshot+recomendaciones mientras
         # haya partida activa, cada REFRESH_SECONDS.
         stop_event = asyncio.Event()
@@ -66,6 +75,10 @@ def create_app(container: ServiceContainer) -> FastAPI:
     app.state.container = container
 
     app.add_middleware(AuthStubMiddleware)
+    if settings.public_demo:
+        from app.cloud.demo_guard import DemoGuardMiddleware
+
+        app.add_middleware(DemoGuardMiddleware)
     app.add_middleware(
         CORSMiddleware,
         # Solo origenes locales: la app no esta pensada para exponerse a la red.
@@ -80,7 +93,7 @@ def create_app(container: ServiceContainer) -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": __version__}
+        return {"status": "ok", "version": __version__, "public_demo": settings.public_demo}
 
     app.include_router(routes_player.router, prefix="/api")
     app.include_router(routes_live.router, prefix="/api")

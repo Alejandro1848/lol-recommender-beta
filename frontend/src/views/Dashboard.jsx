@@ -12,6 +12,7 @@ import CoachAISettings from '../components/CoachAISettings.jsx'
 
 export default function Dashboard({
   backendUp,
+  publicDemo = false,
   profile,
   history,
   liveStatus,
@@ -31,6 +32,12 @@ export default function Dashboard({
   return (
     <div className="layout">
       <div className="main-column">
+        {publicDemo && (
+          <div className="notice">
+            Demo pública: partida histórica simulada y compartida entre visitantes.
+            Los datos no corresponden a una partida en vivo. El entrenamiento está deshabilitado.
+          </div>
+        )}
         <TopPanel
           backendUp={backendUp}
           profile={profile}
@@ -40,8 +47,9 @@ export default function Dashboard({
 
         {backendUp === false && (
           <div className="notice err">
-            No hay conexion con el backend local. Ejecuta:{' '}
-            <code>python main_orchestrator.py --mode app</code>
+            {publicDemo ? 'El servidor no está disponible. Intenta recargar en unos momentos.' : (
+              <>No hay conexion con el backend local. Ejecuta: <code>python main_orchestrator.py --mode app</code></>
+            )}
           </div>
         )}
 
@@ -73,7 +81,7 @@ export default function Dashboard({
             </button>
           ))}
         </div>
-        <CoachAISettings />
+        {!publicDemo && <CoachAISettings />}
 
         {/* Panel central: recomendaciones principales */}
         <div className="card-grid">
@@ -101,7 +109,7 @@ export default function Dashboard({
         </div>
 
         {/* Analiticas de cualquier jugador (no requiere partida activa) */}
-        <PlayerLookup />
+        {!publicDemo && <PlayerLookup />}
 
         {/* Revision post-partida: curva de probabilidad + puntos de inflexion */}
         <PostGameReview />

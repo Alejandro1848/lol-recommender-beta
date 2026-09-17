@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +41,8 @@ class ChampionModelRegistry:
     def __init__(self, models_dir: Path):
         self.base_dir = Path(models_dir) / "champions"
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self._loaded: OrderedDict = OrderedDict()
+        self._load_lock = threading.Lock()
 
     def champion_dir(self, champion: str, tier: str) -> Path:
         path = self.base_dir / _safe_name(champion) / _safe_name(tier).upper()
@@ -74,7 +78,15 @@ class ChampionModelRegistry:
             entries = [e for e in entries if e[1].get("patch") == patch]
         for model_path, meta in reversed(entries):
             try:
-                return joblib.load(model_path), meta
+                with self._load_lock:
+                    stat = model_path.stat()
+                    key = (model_path, stat.st_mtime_ns, stat.st_size)
+                    if key not in self._loaded:
+                        self._loaded[key] = joblib.load(model_path)
+                        while len(self._loaded) > 8:
+                            self._loaded.popitem(last=False)
+                    self._loaded.move_to_end(key)
+                    return self._loaded[key], meta
             except Exception as exc:
                 logger.warning("No se pudo cargar %s: %s", model_path.name, exc)
         return None

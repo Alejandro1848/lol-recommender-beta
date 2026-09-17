@@ -87,6 +87,8 @@ class ServiceContainer:
         # devuelva un snapshot (p. ej. simulate_live), reemplaza al Live
         # Client real. Lo usa main_orchestrator_test.py.
         self.snapshot_provider = None
+        self._demo_styles: dict[str, dict] = {}
+        self._demo_style_lock = threading.Lock()
 
     # ------------------------------------------------------------- cuenta
 
@@ -222,9 +224,11 @@ class ServiceContainer:
             ts = self._live_cache.get("ts") or 0.0
         if not ts:
             return None
-        return max(0.0, time.time() - ts)
+        return 0.0 if self.settings.public_demo else max(0.0, time.time() - ts)
 
     def live_client_diagnostics(self) -> dict | None:
+        if self.settings.public_demo:
+            return {"available": False, "message": "Demo con una partida historica simulada."}
         with self._live_lock:
             cached = self._live_cache.get("live_client_diagnostics")
         return cached or self.live_client.diagnostics()
@@ -250,9 +254,18 @@ class ServiceContainer:
         ttl = max_age if max_age is not None else self.settings.refresh_seconds
         with self._live_lock:
             cache = dict(self._live_cache)
-        if time.time() - cache["ts"] <= ttl and cache["ts"] > 0:
+        if cache["ts"] > 0 and (self.settings.public_demo or time.time() - cache["ts"] <= ttl):
             return cache["snapshot"], cache["recommendations"]
         return self.refresh_live_state()
+
+    def demo_recommendations(self, snapshot: dict | None, style: str) -> dict:
+        """Cuatro estilos sobre el mismo replay inmutable; un calculo por estilo."""
+        with self._demo_style_lock:
+            if style not in self._demo_styles:
+                self._demo_styles[style] = self.engine.build(
+                    snapshot, queue_id=self.settings.queue_id, item_style=style,
+                )
+            return self._demo_styles[style]
 
     def close(self) -> None:
         self.db.close()

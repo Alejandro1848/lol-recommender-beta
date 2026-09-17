@@ -1,0 +1,9 @@
+.git
+.gitignore
+#!include:.gitignore
+docs/
+tests/
+scripts/
+.gcp-local/
+*.zip
+*.tar.gz

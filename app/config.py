@@ -82,6 +82,7 @@ class Settings:
     models_dir: Path
     seed_data_dir: Path
     frontend_dist_dir: Path
+    public_demo: bool = False
 
     @property
     def database_path(self) -> Path:
@@ -101,9 +102,12 @@ class Settings:
         self.ddragon_cache_dir.mkdir(parents=True, exist_ok=True)
 
 
-def load_settings() -> Settings:
+def load_settings(*, data_root: Path | None = None) -> Settings:
     root = app_root()
-    load_dotenv(root / ".env", override=False)
+    public_demo = os.getenv("PUBLIC_DEMO", "").lower() == "true"
+    if not public_demo:
+        load_dotenv(root / ".env", override=False)
+    runtime_root = data_root or root
 
     default_seed = root.parent / "Learning" / "lan_ranked_match_sample"
     seed_dir = Path(_env_str("SEED_DATA_DIR", str(default_seed)))
@@ -134,10 +138,11 @@ def load_settings() -> Settings:
         live_client_base_url=_env_str(
             "LIVE_CLIENT_BASE_URL", "https://127.0.0.1:2999/liveclientdata"
         ),
-        storage_dir=root / "storage",
-        models_dir=root / "models",
+        storage_dir=runtime_root / "storage",
+        models_dir=runtime_root / "models",
         seed_data_dir=seed_dir,
         frontend_dist_dir=bundle_root() / "frontend" / "dist",
+        public_demo=public_demo,
     )
     settings.ensure_dirs()
     return settings
